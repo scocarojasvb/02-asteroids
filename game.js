@@ -133,6 +133,7 @@ class Ship {
     this.invincible    = 3;
     this.shootCooldown = 0;
     this.tripleTimer   = 0;
+    this.shieldTimer   = 0;
     this.dead          = false;
   }
 
@@ -141,6 +142,7 @@ class Ship {
     if (this.invincible    > 0) this.invincible    -= dt;
     if (this.shootCooldown > 0) this.shootCooldown -= dt;
     if (this.tripleTimer   > 0) this.tripleTimer   -= dt;
+    if (this.shieldTimer   > 0) this.shieldTimer   -= dt;
 
     const ROT   = 3.5;   // rad/s
     const THRUST = 260;  // px/s²
@@ -180,6 +182,21 @@ class Ship {
 
   draw() {
     if (this.dead) return;
+
+    // Anillo de escudo temporal
+    if (this.shieldTimer > 0) {
+      ctx.save();
+      ctx.translate(this.x, this.y);
+      ctx.strokeStyle = 'rgba(56, 232, 255, 0.75)';
+      ctx.lineWidth   = 2;
+      ctx.shadowColor = '#38e8ff';
+      ctx.shadowBlur  = 6;
+      ctx.beginPath();
+      ctx.arc(0, 0, this.radius + 6, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
     // Parpadeo durante invencibilidad de reaparición
     if (this.invincible > 0 && Math.floor(this.invincible * 8) % 2 === 0) return;
 
@@ -245,11 +262,12 @@ class Particle {
   }
 }
 
-// ── Power-up: Disparo Triple ─────────────────────────────────────────────────
+// ── Power-up: Disparo Triple / Escudo Temporal ───────────────────────────────
 class PowerUp {
-  constructor(x, y) {
+  constructor(x, y, type = 'triple') {
     this.x    = x;
     this.y    = y;
+    this.type = type;
     this.radius   = 12;
     this.ttl  = 10;
     this.life = 10;
@@ -274,32 +292,39 @@ class PowerUp {
     // Parpadea cuando está por expirar
     if (this.ttl < 3 && Math.floor(this.ttl * 6) % 2 === 0) return;
 
+    const color = this.type === 'shield' ? '#38e8ff' : '#ffe600';
+    const glyph = this.type === 'shield' ? 'S' : 'T';
+
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.rot);
-    ctx.strokeStyle = '#ffe600';
+    ctx.strokeStyle = color;
     ctx.lineWidth   = 2.5;
     ctx.lineJoin    = 'round';
-    ctx.shadowColor = '#ffe600';
+    ctx.shadowColor = color;
     ctx.shadowBlur  = 8;
 
-    const sides = 3;
     ctx.beginPath();
-    for (let i = 0; i < sides; i++) {
-      const a = (i / sides) * Math.PI * 2 - Math.PI / 2;
-      const x = Math.cos(a) * this.radius;
-      const y = Math.sin(a) * this.radius;
-      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    if (this.type === 'shield') {
+      ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+    } else {
+      const sides = 3;
+      for (let i = 0; i < sides; i++) {
+        const a = (i / sides) * Math.PI * 2 - Math.PI / 2;
+        const x = Math.cos(a) * this.radius;
+        const y = Math.sin(a) * this.radius;
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.closePath();
     }
-    ctx.closePath();
     ctx.stroke();
 
     ctx.shadowBlur  = 0;
-    ctx.fillStyle    = '#ffe600';
+    ctx.fillStyle    = color;
     ctx.font         = 'bold 9px monospace';
     ctx.textAlign    = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('T', 0, 0);
+    ctx.fillText(glyph, 0, 0);
 
     ctx.restore();
   }
@@ -311,6 +336,7 @@ let score, lives, level;
 let state;      // 'playing' | 'dead' | 'gameover'
 let deadTimer;
 let tripleShotSpawned;
+let shieldSpawned;
 
 function spawnAsteroids(count) {
   const SAFE_DIST = 130;
@@ -335,6 +361,7 @@ function initGame() {
   level  = 1;
   state  = 'playing';
   tripleShotSpawned = false;
+  shieldSpawned = false;
   spawnAsteroids(4);
 }
 
@@ -344,6 +371,7 @@ function nextLevel() {
   particles = [];
   ship.reset();
   tripleShotSpawned = false;
+  shieldSpawned = false;
   spawnAsteroids(3 + level);
 }
 
@@ -416,14 +444,26 @@ function update(dt) {
   asteroids = asteroids.filter(a => !a.dead).concat(newAsteroids);
   bullets   = bullets.filter(b => !b.dead);
 
-  // Spawn del power-up: garantizado al menos una vez por nivel
-  if (!tripleShotSpawned && destroyedPositions.length > 0) {
+  // Spawn del power-up: garantizado al menos una vez por nivel.
+  // powerups.length === 0 evita que triple y escudo coincidan en pantalla.
+  if (!tripleShotSpawned && powerups.length === 0 && destroyedPositions.length > 0) {
     const isLastOfLevel = asteroids.length === 0;
     for (const pos of destroyedPositions) {
-      if (tripleShotSpawned) break;
+      if (tripleShotSpawned || powerups.length > 0) break;
       if (isLastOfLevel || Math.random() < 0.30) {
-        powerups.push(new PowerUp(pos.x, pos.y));
+        powerups.push(new PowerUp(pos.x, pos.y, 'triple'));
         tripleShotSpawned = true;
+      }
+    }
+  }
+
+  if (!shieldSpawned && powerups.length === 0 && destroyedPositions.length > 0) {
+    const isLastOfLevel = asteroids.length === 0;
+    for (const pos of destroyedPositions) {
+      if (shieldSpawned || powerups.length > 0) break;
+      if (isLastOfLevel || Math.random() < 0.30) {
+        powerups.push(new PowerUp(pos.x, pos.y, 'shield'));
+        shieldSpawned = true;
       }
     }
   }
@@ -431,7 +471,8 @@ function update(dt) {
   // Nave vs power-up
   for (const p of powerups) {
     if (!p.dead && dist(ship, p) < ship.radius + p.radius) {
-      ship.tripleTimer = 5;
+      if (p.type === 'shield') ship.shieldTimer = 5;
+      else ship.tripleTimer = 5;
       p.dead = true;
     }
   }
@@ -441,10 +482,20 @@ function update(dt) {
   if (ship.invincible <= 0) {
     for (const a of asteroids) {
       if (dist(ship, a) < ship.radius + a.radius * 0.82) {
-        killShip();
+        if (ship.shieldTimer > 0) {
+          // El escudo absorbe el impacto: el asteroide se destruye como si le hubieran disparado
+          a.dead = true;
+          score += POINTS[a.size];
+          explode(a.x, a.y, a.size * 5);
+          asteroids.push(...a.split());
+          ship.shieldTimer = 0;
+        } else {
+          killShip();
+        }
         break;
       }
     }
+    asteroids = asteroids.filter(a => !a.dead);
   }
 
   // Nivel completado
@@ -487,6 +538,13 @@ function drawHUD() {
     ctx.font = '13px monospace';
     ctx.textAlign = 'left';
     ctx.fillText(`TRIPLE ${ship.tripleTimer.toFixed(1)}s`, 14, H - 16);
+  }
+
+  if (ship.shieldTimer > 0) {
+    ctx.fillStyle = '#38e8ff';
+    ctx.font = '13px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(`ESCUDO ${ship.shieldTimer.toFixed(1)}s`, 14, H - 34);
   }
 }
 
